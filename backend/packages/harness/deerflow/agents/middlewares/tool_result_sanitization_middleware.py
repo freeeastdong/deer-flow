@@ -16,9 +16,10 @@ network tools, so a fetched ``<system-reminder>`` is escaped to
 deliberately targets only the remote-content tools: local tool output (bash,
 file reads) is left untouched so legitimate code/log content is never mangled.
 
-Scope note: matching is a name-based allowlist, so MCP-provided remote-content
-tools registered under other names are not yet covered — see
-``_REMOTE_CONTENT_TOOL_NAMES``.
+Scope note: built-in tools match by a name-based allowlist
+(``_REMOTE_CONTENT_TOOL_NAMES``); MCP-provided tools match by the
+``deerflow_mcp_remote_content`` metadata tag written at MCP registration, so
+remote-content tools registered under arbitrary names are covered too.
 """
 
 from __future__ import annotations
@@ -44,14 +45,12 @@ logger = logging.getLogger(__name__)
 # free-form reason phrase controlled by whatever server is being captured) into
 # its result message, so it is untrusted remote content too and belongs here.
 #
-# Known limitation: the gate is name-based. An MCP server may expose a
-# remote-content tool under an arbitrary name (e.g. ``fetch_url`` /
-# ``scrape_page``); its results are equally untrusted but are NOT matched here,
-# so they reach the model unneutralized. A name heuristic (matching
-# fetch/search/crawl substrings) is intentionally avoided because it would also
-# mangle legitimate *local* tool output (e.g. a ``file_search`` result). Robust
-# MCP coverage should tag remote-content tools via metadata at registration
-# rather than by name; tracked as a follow-up.
+# Known limitation: the gate is name-based for the built-in tools. MCP-provided
+# tools are covered separately through the ``deerflow_mcp_remote_content``
+# metadata tag written at MCP registration (see ``tools/mcp_metadata.py`` and
+# the ``sanitize_tool_results`` per-server option in ``extensions_config``): all
+# MCP tools are tagged by default because their results are third-party content,
+# and a fully trusted local server can opt out via configuration.
 _REMOTE_CONTENT_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "web_fetch",
@@ -119,19 +118,24 @@ class ToolResultSanitizationMiddleware(AgentMiddleware[AgentState]):
     """Escape injection/framework tags in remote tool results before the model sees them.
 
     Results of the first-party network tools (``web_fetch`` / ``web_search`` /
-    ``image_search`` / ``web_capture``) are rewritten; every other tool's output
-    is returned unchanged. Mirrors the user-input guardrail so untrusted remote
-    content and untrusted user input receive the same structural neutralization.
-
-    Scope is a name-based allowlist (``_REMOTE_CONTENT_TOOL_NAMES``): it reliably
-    covers the built-in web tools without false positives on local tools. It does
-    NOT cover MCP-provided remote-content tools registered under other names —
-    see the note on ``_REMOTE_CONTENT_TOOL_NAMES`` for why a name heuristic is
-    avoided and the metadata-tagging follow-up.
+    ``image_search`` / ``web_capture``) are rewritten via the name allowlist
+    (``_REMOTE_CONTENT_TOOL_NAMES``); MCP-provided tools are rewritten when they
+    carry the ``deerflow_mcp_remote_content`` metadata tag, which MCP
+    registration applies by default (see the per-server ``sanitize_tool_results``
+    option). Every other tool's output is returned unchanged. Mirrors the
+    user-input guardrail so untrusted remote content and untrusted user input
+    receive the same structural neutralization.
     """
 
     def _should_sanitize(self, request: ToolCallRequest) -> bool:
-        return request.tool_call.get("name") in _REMOTE_CONTENT_TOOL_NAMES
+        if request.tool_call.get("name") in _REMOTE_CONTENT_TOOL_NAMES:
+            return True
+        # MCP-provided tools opt into neutralization via the remote-content
+        # metadata tag written at registration, covering remote-content tools
+        # registered under arbitrary names (e.g. ``fetch_url``).
+        from deerflow.tools.mcp_metadata import is_remote_content_tool
+
+        return is_remote_content_tool(getattr(request, "tool", None))
 
     @override
     def wrap_tool_call(

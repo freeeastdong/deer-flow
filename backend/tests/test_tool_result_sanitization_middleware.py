@@ -2,8 +2,8 @@
 
 DeerFlow neutralizes framework/injection tags in the genuine user message. These
 tests pin the same neutralization onto remote tool results (web_fetch /
-web_search / image_search / web_capture), and confirm local tool output is left
-untouched.
+web_search / image_search / web_capture, plus MCP tools carrying the
+remote-content metadata tag), and confirm local tool output is left untouched.
 """
 
 from __future__ import annotations
@@ -187,20 +187,59 @@ class TestCommandAndContentShapes:
         assert result is msg
 
 
-class TestKnownScopeBoundary:
-    """Pin the documented name-based scope so any coverage change is deliberate."""
+class TestMcpRemoteContentTagCoverage:
+    """MCP-provided tools are covered via the ``deerflow_mcp_remote_content``
+    metadata tag written at MCP registration, so a remote-content tool under an
+    arbitrary name (e.g. ``fetch_url``) is neutralized too. Tools without the
+    tag — and requests that carry no tool object at all — fall back to the name
+    allowlist unchanged.
+    """
 
-    def test_mcp_named_remote_tool_is_not_sanitized(self):
-        # KNOWN LIMITATION: an MCP tool registered under an arbitrary name
-        # (e.g. `fetch_url`) is remote content but is NOT matched by the
-        # name allowlist, so it is passed through unchanged today. This test
-        # documents that boundary; broadening coverage (metadata tagging) is a
-        # tracked follow-up and should update this test intentionally.
+    @staticmethod
+    def _tagged_tool() -> SimpleNamespace:
+        return SimpleNamespace(metadata={"deerflow_mcp_remote_content": True})
+
+    def test_tagged_mcp_tool_is_sanitized(self):
+        mw = ToolResultSanitizationMiddleware()
+        request = SimpleNamespace(tool_call={"name": "fetch_url", "id": "tc-1"}, tool=self._tagged_tool())
+        result = mw.wrap_tool_call(request, lambda _: _msg(_MALICIOUS_PAGE, name="fetch_url"))
+        assert "&lt;system-reminder&gt;" in result.content
+        assert "<system-reminder>" not in result.content
+
+    def test_untagged_mcp_tool_is_not_sanitized(self):
+        # A local MCP server opted out via `sanitize_tool_results: false` —
+        # its output must reach the model verbatim.
+        mw = ToolResultSanitizationMiddleware()
+        request = SimpleNamespace(tool_call={"name": "file_search", "id": "tc-1"}, tool=SimpleNamespace(metadata={"deerflow_mcp": True}))
+        msg = _msg("<system-reminder>literal from local fs</system-reminder>", name="file_search")
+        result = mw.wrap_tool_call(request, lambda _: msg)
+        assert result is msg
+
+    def test_missing_tool_object_falls_back_to_name_allowlist(self):
+        # Requests built without a tool object (older call sites, tests) keep
+        # the previous name-only behavior.
         mw = ToolResultSanitizationMiddleware()
         msg = _msg(_MALICIOUS_PAGE, name="fetch_url")
         result = mw.wrap_tool_call(_request("fetch_url"), lambda _: msg)
         assert result is msg
         assert "<system-reminder>" in result.content
+
+    def test_none_tool_object_falls_back_to_name_allowlist(self):
+        mw = ToolResultSanitizationMiddleware()
+        request = SimpleNamespace(tool_call={"name": "web_fetch", "id": "tc-1"}, tool=None)
+        result = mw.wrap_tool_call(request, lambda _: _msg(_MALICIOUS_PAGE, name="web_fetch"))
+        assert "&lt;system-reminder&gt;" in result.content
+
+    def test_awrap_tool_call_sanitizes_tagged_mcp_tool(self):
+        mw = ToolResultSanitizationMiddleware()
+        request = SimpleNamespace(tool_call={"name": "fetch_url", "id": "tc-1"}, tool=self._tagged_tool())
+
+        async def handler(_):
+            return _msg(_MALICIOUS_PAGE, name="fetch_url")
+
+        result = asyncio.run(mw.awrap_tool_call(request, handler))
+        assert "&lt;system-reminder&gt;" in result.content
+        assert "<system-reminder>" not in result.content
 
 
 class TestAsyncPath:

@@ -20,6 +20,7 @@ from langchain.tools import BaseTool
 
 MCP_TOOL_METADATA_KEY = "deerflow_mcp"
 MCP_TOOL_ROUTING_METADATA_KEY = "deerflow_mcp_routing"
+MCP_TOOL_REMOTE_CONTENT_METADATA_KEY = "deerflow_mcp_remote_content"
 
 
 def tag_mcp_tool(tool: BaseTool) -> BaseTool:
@@ -31,6 +32,24 @@ def tag_mcp_tool(tool: BaseTool) -> BaseTool:
 def is_mcp_tool(tool: BaseTool) -> bool:
     """True when ``tool`` carries the MCP-source tag written by :func:`tag_mcp_tool`."""
     return (getattr(tool, "metadata", None) or {}).get(MCP_TOOL_METADATA_KEY) is True
+
+
+def tag_mcp_remote_content(tool: BaseTool) -> BaseTool:
+    """Mark ``tool``'s results as untrusted remote content.
+
+    Read by ``ToolResultSanitizationMiddleware`` to extend prompt-injection
+    neutralization beyond the built-in web-tool allowlist. Mutates in place
+    and returns it for chaining.
+    """
+    tool.metadata = {**(tool.metadata or {}), MCP_TOOL_REMOTE_CONTENT_METADATA_KEY: True}
+    return tool
+
+
+def is_remote_content_tool(tool: BaseTool | None) -> bool:
+    """True when ``tool`` carries the remote-content tag from :func:`tag_mcp_remote_content`."""
+    if tool is None:
+        return False
+    return (getattr(tool, "metadata", None) or {}).get(MCP_TOOL_REMOTE_CONTENT_METADATA_KEY) is True
 
 
 def tag_mcp_routing(tool: BaseTool, routing: Mapping[str, Any]) -> BaseTool:

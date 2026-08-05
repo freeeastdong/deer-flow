@@ -22,7 +22,7 @@ from deerflow.mcp.oauth import build_oauth_tool_interceptor, get_initial_oauth_h
 from deerflow.mcp.session_pool import get_session_pool
 from deerflow.reflection import resolve_variable
 from deerflow.runtime.user_context import resolve_runtime_user_id
-from deerflow.tools.mcp_metadata import tag_mcp_routing, tag_mcp_tool
+from deerflow.tools.mcp_metadata import tag_mcp_remote_content, tag_mcp_routing, tag_mcp_tool
 from deerflow.tools.sync import make_sync_tool_wrapper
 from deerflow.tools.types import Runtime
 
@@ -776,6 +776,12 @@ async def get_mcp_tools() -> list[BaseTool]:
                     )
                     continue
                 tag_mcp_tool(tool)
+                # MCP results are third-party content and attacker-influenceable,
+                # so they default to prompt-injection neutralization. A server
+                # may opt out via `sanitize_tool_results: false` when its output
+                # is fully trusted (e.g. a local filesystem server).
+                if server_cfg is None or server_cfg.sanitize_tool_results:
+                    tag_mcp_remote_content(tool)
                 prefix = f"{source_name}_"
                 original_name = tool.name[len(prefix) :] if tool_name_prefix and tool.name.startswith(prefix) else tool.name
                 routing = resolve_effective_mcp_routing(server_cfg, original_name)

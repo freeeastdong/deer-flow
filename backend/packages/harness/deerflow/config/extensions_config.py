@@ -98,6 +98,10 @@ class McpServerConfig(BaseModel):
     oauth: McpOAuthConfig | None = Field(default=None, description="OAuth configuration (for sse or http type)")
     description: str = Field(default="", description="Human-readable description of what this MCP server provides")
     routing: McpRoutingConfig = Field(default_factory=McpRoutingConfig, description="Soft routing hints for tools from this MCP server")
+    sanitize_tool_results: bool = Field(
+        default=True,
+        description="Tag this server's tools as remote content so ToolResultSanitizationMiddleware neutralizes injection tags in their results. Set False only for fully trusted local servers whose output must reach the model verbatim.",
+    )
     tools: dict[str, McpToolOverride] = Field(default_factory=dict, description="Per-original-tool MCP configuration overrides")
     tool_name_prefix: bool = Field(
         default=True,
